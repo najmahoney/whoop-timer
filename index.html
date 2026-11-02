@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Strap Timer</title>
+<style>
+  :root {
+    --bg: #f4f5f2;
+    --surface: #ffffff;
+    --text: #121412;
+    --muted: #5f6660;
+    --line: #dfe3de;
+    --track: #e4e8e3;
+    --accent: #0b8f61;
+    --accent-ink: #ffffff;
+    --warn: #a8510b;
+    --danger: #b3261e;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d0f0e;
+      --surface: #161a18;
+      --text: #eef2ef;
+      --muted: #98a19a;
+      --line: #262b28;
+      --track: #202522;
+      --accent: #34d399;
+      --accent-ink: #052016;
+      --warn: #f2a65a;
+      --danger: #ff8a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100dvh;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+  [hidden] { display: none !important; }
+  .app {
+    max-width: 440px;
+    min-height: 100dvh;
+    margin: 0 auto;
+    padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+             max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  h1 { margin: 0; font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
+  button { font: inherit; color: inherit; border: 0; cursor: pointer; touch-action: manipulation; }
+  button:disabled { opacity: .45; cursor: default; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px; max-width: 62%;
+    padding: 8px 14px; border-radius: 999px;
+    background: var(--surface); border: 1px solid var(--line);
+    font-size: 14px; font-weight: 550;
+  }
+  .pill span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .pill[data-state="on"] .dot {
+    background: var(--accent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  .notice {
+    margin: 0; padding: 12px 14px; border-radius: 12px;
+    background: var(--surface); border: 1px solid var(--line); font-size: 15px;
+  }
+
+  .dial { position: relative; width: min(76vw, 300px); aspect-ratio: 1; margin: 8px auto 0; }
+  .ring { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .ring circle { fill: none; stroke-width: 9; }
+  .track { stroke: var(--track); }
+  .progress {
+    stroke: var(--accent); stroke-linecap: round;
+    stroke-dasharray: 565.49; transition: stroke-dashoffset .3s linear;
+  }
+  .readout { position: absolute; inset: 0; display: grid; place-content: center; gap: 4px; text-align: center; }
+  .time {
+    font-size: clamp(52px, 17vw, 76px); font-weight: 600; line-height: 1;
+    letter-spacing: -0.03em; font-variant-numeric: tabular-nums;
+  }
+  .sub { color: var(--muted); font-size: 15px; }
+  body[data-phase="done"] .time { color: var(--accent); animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .45; } }
+  @media (prefers-reduced-motion: reduce) {
+    body[data-phase="done"] .time { animation: none; }
+    .progress { transition: none; }
+  }
+
+  .setup { display: grid; gap: 14px; }
+  .presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .presets button {
+    padding: 10px 0; border-radius: 12px;
+    background: var(--surface); border: 1px solid var(--line);
+    font-weight: 550; font-variant-numeric: tabular-nums;
+  }
+  .presets button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  .custom { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .custom label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+  .custom input {
+    width: 100%; padding: 10px 12px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--text);
+    font: inherit; font-size: 20px; font-variant-numeric: tabular-nums;
+  }
+  .custom input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .controls { display: grid; gap: 10px; }
+  .controls button { min-height: 54px; border-radius: 16px; font-size: 17px; font-weight: 600; }
+  .primary { background: var(--accent); color: var(--accent-ink); }
+  .secondary { background: var(--surface); border: 1px solid var(--line); }
+  .ghost { background: transparent; color: var(--danger); }
+
+  .mode, .status { margin: 0; font-size: 14px; color: var(--muted); text-align: center; }
+  .mode:empty, .status:empty { display: none; }
+  .status[data-tone="warn"] { color: var(--warn); }
+  footer { margin-top: auto; display: flex; justify-content: center; }
+  .link {
+    padding: 8px; background: none; color: var(--muted); font-size: 14px;
+    text-decoration: underline; text-underline-offset: 3px;
+  }
+</style>
+</head>
+<body data-phase="idle">
+<main class="app">
+  <header class="bar">
+    <h1>Strap Timer</h1>
+    <button id="connect" class="pill" data-state="off">
+      <span class="dot"></span><span id="connect-label">Connect strap</span>
+    </button>
+  </header>
+
+  <p id="unsupported" class="notice" hidden>
+    This browser can't use Bluetooth. On iPhone, open this page in the <b>Bluefy</b> app.
+    On Android or a computer, use Chrome.
+  </p>
+
+  <section class="dial">
+    <svg class="ring" viewBox="0 0 200 200" aria-hidden="true">
+      <circle class="track" cx="100" cy="100" r="90"/>
+      <circle id="progress" class="progress" cx="100" cy="100" r="90"/>
+    </svg>
+    <div class="readout">
+      <div id="time" class="time">05:00</div>
+      <div id="sub" class="sub">Ready</div>
+    </div>
+  </section>
+
+  <section id="setup" class="setup">
+    <div id="presets" class="presets">
+      <button data-min="1">1m</button>
+      <button data-min="3">3m</button>
+      <button data-min="5">5m</button>
+      <button data-min="10">10m</button>
+      <button data-min="15">15m</button>
+      <button data-min="25">25m</button>
+      <button data-min="45">45m</button>
+      <button data-min="60">60m</button>
+    </div>
+    <div class="custom">
+      <label>Minutes <input id="min" type="number" inputmode="numeric" min="0" max="720" value="5"></label>
+      <label>Seconds <input id="sec" type="number" inputmode="numeric" min="0" max="59" value="0"></label>
+    </div>
+  </section>
+
+  <section class="controls">
+    <button id="start" class="primary">Start</button>
+    <button id="pause" class="secondary" hidden>Pause</button>
+    <button id="cancel" class="ghost" hidden>Cancel</button>
+    <button id="stop" class="primary" hidden>Stop buzzing</button>
+    <button id="done" class="secondary" hidden>Done</button>
+  </section>
+
+  <p id="mode" class="mode"></p>
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+
+  <footer>
+    <button id="test" class="link" disabled>Test buzz</button>
+  </footer>
+</main>
+
+<script type="module">
+  import { WhoopStrap } from './whoop5.js';
+
+  // The strap has six alarm slots. The WHOOP app's own wake alarm lives in one
+  // of them, so a slot holding a future time is never touched.
+  const SLOTS = [6, 5, 4, 3];
+  const MIN_MS = 5_000;
+  const STORE = 'strapTimer.v1';
+  const RING = 2 * Math.PI * 90;
+
+  const $ = (id) => document.getElementById(id);
+  const el = {
+    connect: $('connect'), connectLabel: $('connect-label'), unsupported: $('unsupported'),
+    time: $('time'), sub: $('sub'), progress: $('progress'),
+    setup: $('setup'), presets: $('presets'), min: $('min'), sec: $('sec'),
+    start: $('start'), pause: $('pause'), cancel: $('cancel'), stop: $('stop'), done: $('done'),
+    mode: $('mode'), status: $('status'), test: $('test'),
+  };
+
+  const strap = new WhoopStrap();
+  // phase: idle | arming | running | paused | done
+  // mode:  'strap' when the strap's own alarm will buzz, 'page' when this page has to send the buzz
+  let t = load();
+  let busy = false;
+  let wakeLock = null;
+
+  function load() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORE));
+      if (saved && saved.phase !== 'arming') return saved;
+    } catch {}
+    return { phase: 'idle', durationMs: 5 * 60_000 };
+  }
+
+  function save() {
+    try { localStorage.setItem(STORE, JSON.stringify(t)); } catch {}
+  }
+
+  function remaining() {
+    switch (t.phase) {
+      case 'running': return Math.max(0, t.endMs - Date.now());
+      case 'arming':
+      case 'paused': return t.remainingMs;
+      case 'done': return 0;
+      default: return t.durationMs;
+    }
+  }
+
+  const pad = (n) => String(n).padStart(2, '0');
+  function fmt(ms) {
+    const total = Math.ceil(ms / 1000);
+    const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+    return h ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+  }
+  const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+
+  function status(message, tone = '') {
+    el.status.textContent = message;
+    el.status.dataset.tone = tone;
+  }
+
+  function modeText() {
+    if (t.phase === 'running' && t.mode === 'strap') {
+      return `Alarm set on the strap. It buzzes on time even if your phone locks or this page closes.`;
+    }
+    if (t.phase === 'running') return 'Keep this page open and the screen on. This page sends the buzz.';
+    if (t.phase === 'paused') return 'The strap alarm is cleared while paused.';
+    return '';
+  }
+
+  function render() {
+    const left = remaining();
+    const { phase } = t;
+    el.time.textContent = fmt(left);
+    el.progress.style.strokeDashoffset = String(RING * (1 - (t.durationMs ? left / t.durationMs : 0)));
+    // A round line cap still draws a dot at zero length.
+    el.progress.style.opacity = left > 0 ? '1' : '0';
+    el.sub.textContent = {
+      idle: 'Ready',
+      arming: 'Setting the strap alarm…',
+      running: `Buzzes at ${clock(t.endMs)}`,
+      paused: 'Paused',
+      done: "Time's up",
+    }[phase];
+    document.body.dataset.phase = phase;
+
+    el.setup.hidden = phase !== 'idle';
+    el.start.hidden = !(phase === 'idle' || phase === 'paused' || phase === 'arming');
+    el.start.textContent = phase === 'paused' ? 'Resume' : 'Start';
+    el.pause.hidden = phase !== 'running';
+    el.cancel.hidden = !(phase === 'running' || phase === 'paused');
+    el.stop.hidden = phase !== 'done';
+    el.done.hidden = phase !== 'done';
+    for (const b of [el.start, el.pause, el.cancel, el.stop]) b.disabled = busy;
+    el.test.disabled = busy || !strap.connected;
+
+    for (const b of el.presets.children) {
+      b.setAttribute('aria-pressed', String(Number(b.dataset.min) * 60_000 === t.durationMs));
+    }
+    el.connect.dataset.state = strap.connected ? 'on' : 'off';
+    el.connectLabel.textContent = strap.connected ? strap.name : 'Connect strap';
+    el.mode.textContent = modeText();
+  }
+
+  function readInputs() {
+    const m = Math.min(720, Math.max(0, Math.floor(Number(el.min.value) || 0)));
+    const s = Math.min(59, Math.max(0, Math.floor(Number(el.sec.value) || 0)));
+    return (m * 60 + s) * 1000;
+  }
+
+  function syncInputs() {
+    const total = Math.round(t.durationMs / 1000);
+    el.min.value = Math.floor(total / 60);
+    el.sec.value = total % 60;
+  }
+
+  async function holdScreen(on) {
+    try {
+      if (on && !wakeLock && 'wakeLock' in navigator) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      } else if (!on && wakeLock) {
+        await wakeLock.release();
+        wakeLock = null;
+      }
+    } catch {
+      // Not every browser offers a wake lock.
+    }
+  }
+
+  async function pickSlot() {
+    for (const slot of SLOTS) {
+      const alarm = await strap.readAlarm(slot);
+      if (alarm && alarm.seconds * 1000 <= Date.now()) return slot;
+    }
+    return null;
+  }
+
+  async function clearStrapAlarm() {
+    try {
+      if (!strap.connected) await strap.reconnect();
+      return await strap.clearAlarm(t.slot);
+    } catch {
+      return false;
+    }
+  }
+
+  async function start() {
+    if (busy) return;
+    if (!strap.connected) {
+      status('Connect your strap first.', 'warn');
+      return;
+    }
+    const runMs = t.phase === 'paused' ? t.remainingMs : readInputs();
+    if (runMs < MIN_MS) {
+      status('Pick at least 5 seconds.', 'warn');
+      return;
+    }
+    const durationMs = t.phase === 'paused' ? t.durationMs : runMs;
+    const endMs = Date.now() + runMs;
+    busy = true;
+    t = { phase: 'arming', durationMs, remainingMs: runMs };
+    status('');
+    render();
+
+    let slot = null;
+    let mode = 'page';
+    let why = '';
+    try {
+      slot = await pickSlot();
+      if (slot == null) {
+        why = 'no free alarm slot';
+      } else {
+        const result = await strap.setAlarm(slot, endMs);
+        if (result.ok) mode = 'strap';
+        else why = result.reason;
+      }
+    } catch (e) {
+      why = e.message;
+      // The write may have landed even though the reply didn't.
+      if (slot != null) strap.clearAlarm(slot).catch(() => {});
+    }
+
+    busy = false;
+    t = { phase: 'running', durationMs, endMs, mode, slot: mode === 'strap' ? slot : null };
+    save();
+    if (mode === 'page') {
+      status(`Couldn't set the strap alarm (${why}).`, 'warn');
+      holdScreen(true);
+    }
+    render();
+  }
+
+  async function pause() {
+    if (busy || t.phase !== 'running') return;
+    busy = true;
+    render();
+    const left = Math.max(0, t.endMs - Date.now());
+    if (t.mode === 'strap' && !(await clearStrapAlarm())) {
+      busy = false;
+      status(`Couldn't reach the strap to pause. It will still buzz at ${clock(t.endMs)}.`, 'warn');
+      render();
+      return;
+    }
+    busy = false;
+    t = { phase: 'paused', durationMs: t.durationMs, remainingMs: left };
+    save();
+    holdScreen(false);
+    status('');
+    render();
+  }
+
+  async function cancel() {
+    if (busy) return;
+    if (t.phase === 'running' && t.mode === 'strap') {
+      busy = true;
+      render();
+      const cleared = await clearStrapAlarm();
+      busy = false;
+      if (!cleared) {
+        status(`Couldn't reach the strap. It will still buzz at ${clock(t.endMs)}. Connect and cancel again.`, 'warn');
+        render();
+        return;
+      }
+    }
+    reset();
+  }
+
+  async function finish() {
+    const { mode, endMs } = t;
+    t = { ...t, phase: 'done' };
+    save();
+    holdScreen(false);
+    status('');
+    render();
+    // A page-sent buzz that is more than a minute late is not worth sending.
+    if (mode === 'page' && Date.now() - endMs < 60_000) {
+      try {
+        await strap.buzz(8);
+      } catch (e) {
+        status(`Couldn't buzz the strap: ${e.message}`, 'warn');
+      }
+    }
+  }
+
+  async function stopBuzz() {
+    if (busy) return;
+    busy = true;
+    render();
+    try {
+      if (!strap.connected) await strap.reconnect();
+      await strap.stopBuzz();
+      status('');
+    } catch (e) {
+      status(`Couldn't stop the buzz: ${e.message}`, 'warn');
+    }
+    busy = false;
+    reset();
+  }
+
+  function reset() {
+    t = { phase: 'idle', durationMs: t.durationMs };
+    save();
+    holdScreen(false);
+    syncInputs();
+    render();
+  }
+
+  el.connect.addEventListener('click', async () => {
+    if (!WhoopStrap.supported) {
+      el.unsupported.hidden = false;
+      return;
+    }
+    if (strap.connected) return;
+    status('Connecting…');
+    try {
+      await strap.connect();
+      status('');
+    } catch (e) {
+      status(e.name === 'NotFoundError' ? 'No strap picked.' : `Couldn't connect: ${e.message}`, 'warn');
+    }
+    render();
+  });
+
+  el.presets.addEventListener('click', (e) => {
+    const minutes = e.target.closest('button')?.dataset.min;
+    if (!minutes) return;
+    t.durationMs = Number(minutes) * 60_000;
+    syncInputs();
+    save();
+    render();
+  });
+
+  for (const input of [el.min, el.sec]) {
+    input.addEventListener('input', () => {
+      t.durationMs = readInputs();
+      save();
+      render();
+    });
+  }
+
+  el.start.addEventListener('click', start);
+  el.pause.addEventListener('click', pause);
+  el.cancel.addEventListener('click', cancel);
+  el.stop.addEventListener('click', stopBuzz);
+  el.done.addEventListener('click', reset);
+  el.test.addEventListener('click', async () => {
+    try {
+      await strap.buzz(2);
+      status('Buzz sent.');
+    } catch (e) {
+      status(`Couldn't buzz: ${e.message}`, 'warn');
+    }
+  });
+
+  strap.addEventListener('connected', render);
+  strap.addEventListener('disconnected', () => {
+    if (t.phase === 'running' && t.mode === 'strap') {
+      status("Strap disconnected. Its alarm is still set, so it'll buzz on time.");
+    } else if (t.phase === 'running') {
+      status('Strap disconnected. Reconnecting…', 'warn');
+      setTimeout(() => strap.reconnect().then(() => status('')).catch(() => {}), 1000);
+    }
+    render();
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (strap.device && !strap.connected) strap.reconnect().catch(() => {});
+    if (t.phase === 'running' && t.mode === 'page') holdScreen(true);
+    render();
+  });
+
+  setInterval(() => {
+    if (t.phase === 'running' && Date.now() >= t.endMs) finish();
+    else render();
+  }, 250);
+
+  if (WhoopStrap.supported) strap.restore().catch(() => {});
+  else el.unsupported.hidden = false;
+  syncInputs();
+  render();
+</script>
+</body>
+</html>
