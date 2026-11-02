@@ -135,7 +135,8 @@
     overflow-wrap: anywhere;
   }
   .log ol:empty::before { content: "Nothing yet."; }
-  footer { margin-top: auto; display: flex; justify-content: center; }
+  footer { margin-top: auto; display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+  .version { font-size: 12px; color: var(--muted); }
   .link {
     padding: 8px; background: none; color: var(--muted); font-size: 14px;
     text-decoration: underline; text-underline-offset: 3px;
@@ -202,11 +203,16 @@
 
   <footer>
     <button id="test" class="link" disabled>Test buzz</button>
+    <button id="find-all" class="link">Strap not listed?</button>
+    <span id="version" class="version"></span>
   </footer>
 </main>
 
 <script type="module">
-  import { describeError, WhoopStrap } from './whoop5.js';
+  // Bump VERSION with every change: the query string makes browsers that
+  // cached the old module fetch the new one.
+  import { describeError, WhoopStrap } from './whoop5.js?v=3';
+  const VERSION = '3';
 
   // The strap has six alarm slots. The WHOOP app's own wake alarm lives in one
   // of them, so a slot holding a future time is never touched.
@@ -222,6 +228,7 @@
     setup: $('setup'), presets: $('presets'), min: $('min'), sec: $('sec'),
     start: $('start'), pause: $('pause'), cancel: $('cancel'), stop: $('stop'), done: $('done'),
     mode: $('mode'), status: $('status'), test: $('test'), logBox: $('log-box'), log: $('log'),
+    findAll: $('find-all'), version: $('version'),
   };
 
   const strap = new WhoopStrap();
@@ -307,6 +314,7 @@
     el.done.hidden = phase !== 'done';
     for (const b of [el.start, el.pause, el.cancel, el.stop]) b.disabled = busy;
     el.test.disabled = busy || !strap.connected;
+    el.findAll.hidden = strap.connected;
 
     for (const b of el.presets.children) {
       b.setAttribute('aria-pressed', String(Number(b.dataset.min) * 60_000 === t.durationMs));
@@ -480,7 +488,8 @@
     render();
   }
 
-  el.connect.addEventListener('click', async () => {
+  // `all` lists every nearby device, for a strap that doesn't advertise the WHOOP service.
+  async function connectStrap(all) {
     if (!WhoopStrap.supported) {
       el.unsupported.hidden = false;
       return;
@@ -488,15 +497,20 @@
     if (strap.connected) return;
     status('Connecting…');
     try {
-      await strap.connect();
+      await strap.connect({ all });
       status('');
     } catch (e) {
-      const cancelled = e.name === 'NotFoundError' && /cancel/i.test(describeError(e));
-      status(cancelled ? 'No strap picked.' : `Couldn't connect. ${describeError(e)}`, 'warn');
-      if (!cancelled) el.logBox.open = true;
+      const notListed = e.step === 'Choosing strap'
+        ? ' If your strap wasn\'t in the list, fully close the WHOOP app (swipe it away), wait 10 seconds, and try again, or tap "Strap not listed?".'
+        : '';
+      status(`Couldn't connect. ${describeError(e)}${notListed}`, 'warn');
+      el.logBox.open = true;
     }
     render();
-  });
+  }
+
+  el.connect.addEventListener('click', () => connectStrap(false));
+  el.findAll.addEventListener('click', () => connectStrap(true));
 
   el.presets.addEventListener('click', (e) => {
     const minutes = e.target.closest('button')?.dataset.min;
@@ -553,7 +567,8 @@
     else render();
   }, 250);
 
-  addLog(`Browser: ${navigator.userAgent}`);
+  el.version.textContent = `v${VERSION}`;
+  addLog(`Strap Timer v${VERSION} · ${navigator.userAgent}`);
   if (WhoopStrap.supported) strap.restore().catch(() => {});
   else el.unsupported.hidden = false;
   syncInputs();

@@ -179,6 +179,7 @@ class StrapError extends Error {
   constructor(step, cause) {
     super(`${step} failed: ${describeError(cause)}`);
     this.name = typeof cause?.name === 'string' ? cause.name : 'StrapError';
+    this.step = step;
     this.cause = cause;
   }
 }
@@ -207,13 +208,15 @@ export class WhoopStrap extends EventTarget {
     return this.device?.name || 'WHOOP strap';
   }
 
-  // Opens the browser's device chooser, so it must run from a tap.
-  async connect() {
-    const device = await this.#step('Choosing strap', () =>
-      navigator.bluetooth.requestDevice({
-        filters: [{ services: [SERVICE] }],
-        optionalServices: [SERVICE],
-      }),
+  // Opens the browser's device chooser, so it must run from a tap. With
+  // `all`, every nearby device is listed, for a strap that doesn't put the
+  // WHOOP service in its advertisement.
+  async connect({ all = false } = {}) {
+    const options = all
+      ? { acceptAllDevices: true, optionalServices: [SERVICE] }
+      : { filters: [{ services: [SERVICE] }], optionalServices: [SERVICE] };
+    const device = await this.#step(all ? 'Choosing strap (all devices)' : 'Choosing strap', () =>
+      navigator.bluetooth.requestDevice(options),
     );
     this.#log(`Picked ${device.name ?? 'a strap'}`);
     this.#adopt(device);

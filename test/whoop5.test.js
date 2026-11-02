@@ -84,7 +84,10 @@ test('a bare-string rejection names the failed step instead of "undefined"', asy
   const strap = new WhoopStrap();
   const log = [];
   strap.addEventListener('log', (e) => log.push(e.detail));
-  await assert.rejects(strap.connect(), { message: 'Opening WHOOP service failed: Service not found' });
+  await assert.rejects(strap.connect(), {
+    message: 'Opening WHOOP service failed: Service not found',
+    step: 'Opening WHOOP service',
+  });
   assert.ok(log.includes('Opening WHOOP service failed: Service not found'));
 });
 
@@ -104,6 +107,17 @@ test('falls back to writeValue and logs the strap answering the hello', async ()
   assert.deepEqual(fake.writes[0].frame, CLIENT_HELLO);
   assert.deepEqual(await strap.readAlarm(6), { slot: 6, seconds: 0 });
   assert.ok(log.includes('Strap answered'));
+});
+
+test('"all devices" drops the service filter but still asks for the WHOOP service', async () => {
+  const fake = createFakeBluetooth();
+  Object.defineProperty(globalThis, 'navigator', { value: { bluetooth: fake }, configurable: true });
+  const strap = new WhoopStrap();
+  await strap.connect({ all: true });
+  assert.ok(strap.connected);
+  assert.equal(fake.requests[0].acceptAllDevices, true);
+  assert.equal(fake.requests[0].filters, undefined);
+  assert.deepEqual(fake.requests[0].optionalServices, ['fd4b0001-cce1-4033-93ce-002d5875f58a']);
 });
 
 test('pending requests fail when the strap disconnects', async () => {

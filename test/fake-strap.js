@@ -105,7 +105,9 @@ export function createFakeBluetooth({ occupied = {}, rejectAlarms = false, legac
     device,
     slots,
     writes,
-    async requestDevice() {
+    requests: [],
+    async requestDevice(options) {
+      this.requests.push(options);
       return device;
     },
     async getDevices() {
