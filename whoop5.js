@@ -158,12 +158,41 @@ export function alarmBody(slot, epochMs) {
 
 // ── Connection ───────────────────────────────────────────────────────────────
 
+// Bluefy and other iOS Bluetooth bridges can reject with a bare string or a
+// plain object instead of an Error, so failures are described defensively.
+export function describeError(e) {
+  if (e == null) return 'unknown error';
+  if (typeof e === 'string') return e;
+  if (e instanceof StrapError) return e.message;
+  if (e.message) return e.name && e.name !== 'Error' && !e.message.startsWith(e.name) ? `${e.name}: ${e.message}` : e.message;
+  if (e.name) return e.name;
+  try {
+    const json = JSON.stringify(e);
+    if (json && json !== '{}') return json;
+  } catch {}
+  return String(e);
+}
+
+// Names the step that failed and keeps the original error's name, so a
+// cancelled chooser still reads as NotFoundError.
+class StrapError extends Error {
+  constructor(step, cause) {
+    super(`${step} failed: ${describeError(cause)}`);
+    this.name = typeof cause?.name === 'string' ? cause.name : 'StrapError';
+    this.cause = cause;
+  }
+}
+
+// Older Web Bluetooth implementations only have writeValue.
+const gattWrite = (ch, data) => (ch.writeValueWithResponse ? ch.writeValueWithResponse(data) : ch.writeValue(data));
+
 export class WhoopStrap extends EventTarget {
   device = null;
   #command = null;
   #listeners = [];
   #pending = new Map();
   #queue = Promise.resolve();
+  #opening = null;
   #seq = 2 + Math.floor(Math.random() * 200);
 
   static get supported() {
@@ -180,12 +209,14 @@ export class WhoopStrap extends EventTarget {
 
   // Opens the browser's device chooser, so it must run from a tap.
   async connect() {
-    this.#adopt(
-      await navigator.bluetooth.requestDevice({
+    const device = await this.#step('Choosing strap', () =>
+      navigator.bluetooth.requestDevice({
         filters: [{ services: [SERVICE] }],
         optionalServices: [SERVICE],
       }),
     );
+    this.#log(`Picked ${device.name ?? 'a strap'}`);
+    this.#adopt(device);
     await this.#open();
   }
 
@@ -242,10 +273,32 @@ export class WhoopStrap extends EventTarget {
     device.addEventListener('gattserverdisconnected', () => this.#dropped());
   }
 
-  async #open() {
-    const server = await this.device.gatt.connect();
-    const service = await server.getPrimaryService(SERVICE);
-    const command = await service.getCharacteristic(COMMAND_CHAR);
+  #log(text) {
+    this.dispatchEvent(new CustomEvent('log', { detail: text }));
+  }
+
+  async #step(label, work) {
+    this.#log(`${label}…`);
+    try {
+      return await work();
+    } catch (e) {
+      this.#log(`${label} failed: ${describeError(e)}`);
+      throw new StrapError(label, e);
+    }
+  }
+
+  // A restore at page load and a tap on Connect can overlap; they share one attempt.
+  #open() {
+    this.#opening ??= this.#openNow().finally(() => {
+      this.#opening = null;
+    });
+    return this.#opening;
+  }
+
+  async #openNow() {
+    const server = await this.#step('Connecting', () => this.device.gatt.connect());
+    const service = await this.#step('Opening WHOOP service', () => server.getPrimaryService(SERVICE));
+    const command = await this.#step('Finding command channel', () => service.getCharacteristic(COMMAND_CHAR));
 
     for (const { ch, handler } of this.#listeners) ch.removeEventListener('characteristicvaluechanged', handler);
     this.#listeners = [];
@@ -254,7 +307,8 @@ export class WhoopStrap extends EventTarget {
         const ch = await service.getCharacteristic(uuid);
         const reassembler = new Reassembler();
         const handler = (event) => {
-          const v = event.target.value;
+          const v = event.target?.value ?? ch.value;
+          if (!v) return;
           for (const frame of reassembler.feed(new Uint8Array(v.buffer, v.byteOffset, v.byteLength))) {
             this.#onFrame(frame);
           }
@@ -262,17 +316,26 @@ export class WhoopStrap extends EventTarget {
         ch.addEventListener('characteristicvaluechanged', handler);
         this.#listeners.push({ ch, handler });
         await ch.startNotifications();
-      } catch {
+      } catch (e) {
         // Not every firmware exposes all four channels.
+        this.#log(`Channel ${uuid.slice(0, 8)} unavailable: ${describeError(e)}`);
       }
     }
+    this.#log(`Listening on ${this.#listeners.length} channel(s)`);
 
-    await command.writeValueWithResponse(CLIENT_HELLO);
+    const answered = this.#expect(Cmd.GET_HELLO, CLIENT_HELLO[9], 4000);
+    answered.catch(() => {}); // only logged, below
+    await this.#step('Saying hello', () => gattWrite(command, CLIENT_HELLO));
     this.#command = command;
+    this.#log('Connected');
     this.dispatchEvent(new Event('connected'));
+    answered
+      .then(() => this.#log('Strap answered'))
+      .catch(() => this.#log("No answer from the strap yet, so replies may not be getting through"));
   }
 
   #dropped() {
+    this.#log('Disconnected');
     this.#command = null;
     for (const waiter of this.#pending.values()) waiter.reject(new Error('Strap disconnected'));
     this.#pending.clear();
@@ -302,7 +365,7 @@ export class WhoopStrap extends EventTarget {
   #write(frame) {
     const run = this.#queue.then(() => {
       if (!this.#command) throw new Error('Strap is not connected');
-      return this.#command.writeValueWithResponse(frame);
+      return gattWrite(this.#command, frame);
     });
     this.#queue = run.catch(() => {});
     return run;
@@ -313,11 +376,10 @@ export class WhoopStrap extends EventTarget {
     await this.#write(commandFrame(cmd, this.#nextSeq(), body));
   }
 
-  async #request(cmd, body, timeoutMs = 8000) {
-    this.#guard(cmd);
-    const seq = this.#nextSeq();
+  // Registers interest in the reply to (cmd, seq) before the request is written.
+  #expect(cmd, seq, timeoutMs) {
     const key = `${cmd}:${seq}`;
-    const reply = new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(key);
         reject(new Error(`No reply from the strap (command ${cmd})`));
@@ -333,6 +395,13 @@ export class WhoopStrap extends EventTarget {
         },
       });
     });
+  }
+
+  async #request(cmd, body, timeoutMs = 8000) {
+    this.#guard(cmd);
+    const seq = this.#nextSeq();
+    const key = `${cmd}:${seq}`;
+    const reply = this.#expect(cmd, seq, timeoutMs);
     try {
       await this.#write(commandFrame(cmd, seq, body));
     } catch (e) {

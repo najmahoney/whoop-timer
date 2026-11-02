@@ -26,7 +26,9 @@ const u32 = (n) => [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 
 
 // occupied: { slot: epochSeconds } alarms already on the strap.
 // rejectAlarms: answer every SET_ALARM_TIME with "time not in the future".
-export function createFakeBluetooth({ occupied = {}, rejectAlarms = false } = {}) {
+// legacyWrite: offer only writeValue, as older Web Bluetooth bridges do.
+// failService: reject getPrimaryService with this value (a bare string, like some iOS bridges).
+export function createFakeBluetooth({ occupied = {}, rejectAlarms = false, legacyWrite = false, failService } = {}) {
   const slots = new Map(Object.entries(occupied).map(([k, v]) => [Number(k), v]));
   const writes = [];
   const replies = new FakeCharacteristic(REPLY_CHAR);
@@ -42,7 +44,7 @@ export function createFakeBluetooth({ occupied = {}, rejectAlarms = false } = {}
     }, delay);
   };
 
-  command.writeValueWithResponse = async (data) => {
+  command[legacyWrite ? 'writeValue' : 'writeValueWithResponse'] = async (data) => {
     const frame = new Uint8Array(data);
     if (!device.gatt.connected) throw new Error('GATT server is disconnected');
     const [seq, cmd] = [frame[9], frame[10]];
@@ -80,6 +82,7 @@ export function createFakeBluetooth({ occupied = {}, rejectAlarms = false } = {}
   };
   const server = {
     async getPrimaryService(uuid) {
+      if (failService !== undefined) throw failService;
       if (uuid !== SERVICE) throw new Error(`No service ${uuid}`);
       return service;
     },

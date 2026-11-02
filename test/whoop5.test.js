@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  alarmBody, buzzBody, CLIENT_HELLO, commandFrame, buildFrame, parseResponse, Reassembler, WhoopStrap,
+  alarmBody, buzzBody, CLIENT_HELLO, commandFrame, buildFrame, describeError, parseResponse, Reassembler, WhoopStrap,
 } from '../whoop5.js';
 import { createFakeBluetooth } from './fake-strap.js';
 
@@ -76,6 +76,34 @@ test('connects, sends the hello, and round-trips alarm commands', async () => {
   assert.equal(buzz.body[11], 1);
 
   await strap.stopBuzz(); // resolves on the final reply, not the pending one
+});
+
+test('a bare-string rejection names the failed step instead of "undefined"', async () => {
+  const fake = createFakeBluetooth({ failService: 'Service not found' });
+  Object.defineProperty(globalThis, 'navigator', { value: { bluetooth: fake }, configurable: true });
+  const strap = new WhoopStrap();
+  const log = [];
+  strap.addEventListener('log', (e) => log.push(e.detail));
+  await assert.rejects(strap.connect(), { message: 'Opening WHOOP service failed: Service not found' });
+  assert.ok(log.includes('Opening WHOOP service failed: Service not found'));
+});
+
+test('describeError copes with strings, objects and DOMException-style errors', () => {
+  assert.equal(describeError('Bluetooth is off'), 'Bluetooth is off');
+  assert.equal(describeError({ code: 3 }), '{"code":3}');
+  assert.equal(describeError({}), '[object Object]');
+  assert.equal(describeError(undefined), 'unknown error');
+  assert.equal(describeError({ name: 'NetworkError', message: 'GATT Server is disconnected.' }), 'NetworkError: GATT Server is disconnected.');
+});
+
+test('falls back to writeValue and logs the strap answering the hello', async () => {
+  const { fake, strap } = await connected({ legacyWrite: true });
+  const log = [];
+  strap.addEventListener('log', (e) => log.push(e.detail));
+  assert.ok(strap.connected);
+  assert.deepEqual(fake.writes[0].frame, CLIENT_HELLO);
+  assert.deepEqual(await strap.readAlarm(6), { slot: 6, seconds: 0 });
+  assert.ok(log.includes('Strap answered'));
 });
 
 test('pending requests fail when the strap disconnects', async () => {

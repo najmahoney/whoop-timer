@@ -123,6 +123,18 @@
   .mode, .status { margin: 0; font-size: 14px; color: var(--muted); text-align: center; }
   .mode:empty, .status:empty { display: none; }
   .status[data-tone="warn"] { color: var(--warn); }
+  .log { font-size: 13px; color: var(--muted); }
+  .log summary { cursor: pointer; text-align: center; list-style: none; }
+  .log summary::-webkit-details-marker { display: none; }
+  .log summary::after { content: " ▾"; }
+  .log[open] summary::after { content: " ▴"; }
+  .log ol {
+    margin: 8px 0 0; padding: 10px 12px; list-style: none;
+    border-radius: 12px; background: var(--surface); border: 1px solid var(--line);
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    overflow-wrap: anywhere;
+  }
+  .log ol:empty::before { content: "Nothing yet."; }
   footer { margin-top: auto; display: flex; justify-content: center; }
   .link {
     padding: 8px; background: none; color: var(--muted); font-size: 14px;
@@ -183,13 +195,18 @@
   <p id="mode" class="mode"></p>
   <p id="status" class="status" role="status" aria-live="polite"></p>
 
+  <details id="log-box" class="log">
+    <summary>Connection details</summary>
+    <ol id="log"></ol>
+  </details>
+
   <footer>
     <button id="test" class="link" disabled>Test buzz</button>
   </footer>
 </main>
 
 <script type="module">
-  import { WhoopStrap } from './whoop5.js';
+  import { describeError, WhoopStrap } from './whoop5.js';
 
   // The strap has six alarm slots. The WHOOP app's own wake alarm lives in one
   // of them, so a slot holding a future time is never touched.
@@ -204,7 +221,7 @@
     time: $('time'), sub: $('sub'), progress: $('progress'),
     setup: $('setup'), presets: $('presets'), min: $('min'), sec: $('sec'),
     start: $('start'), pause: $('pause'), cancel: $('cancel'), stop: $('stop'), done: $('done'),
-    mode: $('mode'), status: $('status'), test: $('test'),
+    mode: $('mode'), status: $('status'), test: $('test'), logBox: $('log-box'), log: $('log'),
   };
 
   const strap = new WhoopStrap();
@@ -247,6 +264,13 @@
   function status(message, tone = '') {
     el.status.textContent = message;
     el.status.dataset.tone = tone;
+  }
+
+  function addLog(text) {
+    const item = document.createElement('li');
+    item.textContent = `${new Date().toLocaleTimeString([], { hour12: false })}  ${text}`;
+    el.log.append(item);
+    while (el.log.children.length > 40) el.log.firstElementChild.remove();
   }
 
   function modeText() {
@@ -366,7 +390,7 @@
         else why = result.reason;
       }
     } catch (e) {
-      why = e.message;
+      why = describeError(e);
       // The write may have landed even though the reply didn't.
       if (slot != null) strap.clearAlarm(slot).catch(() => {});
     }
@@ -428,7 +452,7 @@
       try {
         await strap.buzz(8);
       } catch (e) {
-        status(`Couldn't buzz the strap: ${e.message}`, 'warn');
+        status(`Couldn't buzz the strap: ${describeError(e)}`, 'warn');
       }
     }
   }
@@ -442,7 +466,7 @@
       await strap.stopBuzz();
       status('');
     } catch (e) {
-      status(`Couldn't stop the buzz: ${e.message}`, 'warn');
+      status(`Couldn't stop the buzz: ${describeError(e)}`, 'warn');
     }
     busy = false;
     reset();
@@ -467,7 +491,9 @@
       await strap.connect();
       status('');
     } catch (e) {
-      status(e.name === 'NotFoundError' ? 'No strap picked.' : `Couldn't connect: ${e.message}`, 'warn');
+      const cancelled = e.name === 'NotFoundError' && /cancel/i.test(describeError(e));
+      status(cancelled ? 'No strap picked.' : `Couldn't connect. ${describeError(e)}`, 'warn');
+      if (!cancelled) el.logBox.open = true;
     }
     render();
   });
@@ -499,10 +525,11 @@
       await strap.buzz(2);
       status('Buzz sent.');
     } catch (e) {
-      status(`Couldn't buzz: ${e.message}`, 'warn');
+      status(`Couldn't buzz: ${describeError(e)}`, 'warn');
     }
   });
 
+  strap.addEventListener('log', (e) => addLog(e.detail));
   strap.addEventListener('connected', render);
   strap.addEventListener('disconnected', () => {
     if (t.phase === 'running' && t.mode === 'strap') {
@@ -526,6 +553,7 @@
     else render();
   }, 250);
 
+  addLog(`Browser: ${navigator.userAgent}`);
   if (WhoopStrap.supported) strap.restore().catch(() => {});
   else el.unsupported.hidden = false;
   syncInputs();
